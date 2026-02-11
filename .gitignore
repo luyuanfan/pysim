@@ -1,6 +1,6 @@
 *.pyc
 .*.swp
-
+/venv/
 /docs/_*
 /docs/generated
 /.cache
