@@ -1,7 +1,7 @@
 pyscard
 pyserial
 pytlv
-cmd2 >= 1.5.0
+cmd2>=2.6.2,<3.0
 jsonpath-ng
 construct >= 2.10.70
 bidict
@@ -12,13 +12,13 @@ colorlog
 pycryptodomex
 packaging
 asn1tools
+smpp.pdu @ git+https://github.com/hologram-io/smpp.pdu
+smpp.twisted3 @ git+https://github.com/jookies/smpp.twisted
+smpplib
+qrcode
+qrcode[pil]
 pyOpenSSL
 klein
 cmd2
 requests
 service_identity
-smpp.pdu @ git+https://github.com/hologram-io/smpp.pdu
-smpp.twisted3 @ git+https://github.com/jookies/smpp.twisted
-qrcode
-qrcode[pil]
-smpplib

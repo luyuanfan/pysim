@@ -1,11 +1,6 @@
 *.pyc
-<<<<<<< HEAD
 .*.swp
 /venv/
-=======
-.*.sw?
-
->>>>>>> e7016b5b57f70b22c8261efc4d28c2ca9fb3edd8
 /docs/_*
 /docs/generated
 /.cache

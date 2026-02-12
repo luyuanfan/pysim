@@ -24,7 +24,7 @@
 #
 
 import logging
-from cmd2 import styles
+from cmd2 import style
 
 class _PySimLogHandler(logging.Handler):
     def __init__(self, log_callback):
