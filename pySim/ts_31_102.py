@@ -486,17 +486,17 @@ class EF_UST(EF_UServiceTable):
 # TS 31.103 Section 4.2.7 - *not* the same as DF.GSM/EF.ECC!
 class EF_ECC(LinFixedEF):
     _test_de_encode = [
-        ( '19f1ff01', { "call_code": "911f",
+        ( '19f1ff01', { "call_code": "911",
                         "service_category": { "police": True, "ambulance": False, "fire_brigade": False,
                                               "marine_guard": False, "mountain_rescue": False,
                                               "manual_ecall": False, "automatic_ecall": False } } ),
-        ( '19f3ff02', { "call_code": "913f",
+        ( '19f3ff02', { "call_code": "913",
                         "service_category": { "police": False, "ambulance": True, "fire_brigade": False,
                                               "marine_guard": False, "mountain_rescue": False,
                                               "manual_ecall": False, "automatic_ecall": False } } ),
     ]
     _test_no_pad = True
-    cc_construct = BcdAdapter(Rpad(Bytes(3)))
+    cc_construct = PaddedBcdAdapter(Rpad(Bytes(3)))
     category_construct = FlagsEnum(Byte, police=1, ambulance=2, fire_brigade=3, marine_guard=4,
                                    mountain_rescue=5, manual_ecall=6, automatic_ecall=7)
     alpha_construct = GsmOrUcs2Adapter(Rpad(GreedyBytes))
@@ -596,7 +596,7 @@ class EF_ICI(CyclicEF):
         self._construct = Struct('alpha_id'/Bytes(this._.total_len-28),
                                  'len_of_bcd_contents'/Int8ub,
                                  'ton_npi'/Int8ub,
-                                 'call_number'/BcdAdapter(Bytes(10)),
+                                 'call_number'/PaddedBcdAdapter(Rpad(Bytes(10))),
                                  'cap_cfg2_record_id'/Int8ub,
                                  'ext5_record_id'/Int8ub,
                                  'date_and_time'/BcdAdapter(Bytes(7)),
@@ -612,7 +612,7 @@ class EF_OCI(CyclicEF):
         self._construct = Struct('alpha_id'/Bytes(this._.total_len-27),
                                  'len_of_bcd_contents'/Int8ub,
                                  'ton_npi'/Int8ub,
-                                 'call_number'/BcdAdapter(Bytes(10)),
+                                 'call_number'/PaddedBcdAdapter(Rpad(Bytes(10))),
                                  'cap_cfg2_record_id'/Int8ub,
                                  'ext5_record_id'/Int8ub,
                                  'date_and_time'/BcdAdapter(Bytes(7)),
@@ -1118,7 +1118,7 @@ class EF_Routing_Indicator(TransparentEF):
         # responsibility of home network operator but BCD coding shall be used. If a network
         # operator decides to assign less than 4 digits to Routing Indicator, the remaining digits
         # shall be coded as "1111" to fill the 4 digits coding of Routing Indicator
-        self._construct = Struct('routing_indicator'/Rpad(BcdAdapter(Bytes(2)), 'f', 2),
+        self._construct = Struct('routing_indicator'/PaddedBcdAdapter(Rpad(Bytes(2))),
                                  'rfu'/Bytes(2))
 
 # TS 31.102 Section 4.4.11.13 (Rel 16)

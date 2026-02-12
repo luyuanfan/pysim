@@ -1,4 +1,5 @@
 # coding=utf-8
+
 """Representation of the runtime state of an application like pySim-shell.
 """
 
@@ -25,7 +26,7 @@ from pySim.exceptions import *
 from pySim.filesystem import *
 from pySim.log import PySimLogger
 
-log = PySimLogger.get("RUNTIME")
+log = PySimLogger.get(__name__)
 
 def lchan_nr_from_cla(cla: int) -> int:
     """Resolve the logical channel number from the CLA byte."""
@@ -115,7 +116,7 @@ class RuntimeState:
             for a in aids_unknown:
                 log.info(" unknown: %s (EF.DIR)" % a)
         else:
-            log.warn("EF.DIR seems to be empty!")
+            log.warning("EF.DIR seems to be empty!")
 
         # Some card applications may not be registered in EF.DIR, we will actively
         # probe for those applications
@@ -477,11 +478,15 @@ class RuntimeLchan:
 
     def get_file_for_filename(self, name: str):
         """Get the related CardFile object for a specified filename."""
+        if is_hex(name):
+            name = name.lower()
         sels = self.selected_file.get_selectables()
         return sels[name]
 
     def activate_file(self, name: str):
         """Request ACTIVATE FILE of specified file."""
+        if is_hex(name):
+            name = name.lower()
         sels = self.selected_file.get_selectables()
         f = sels[name]
         data, sw = self.scc.activate_file(f.fid)
@@ -552,8 +557,8 @@ class RuntimeLchan:
             raise TypeError("Data length (%u) exceeds %s size (%u) by %u bytes" %
                             (data_len, writeable_name, writeable_size, data_len - writeable_size))
         elif data_len < writeable_size:
-            log.warn("Data length (%u) less than %s size (%u), leaving %u unwritten bytes at the end of the %s" %
-                     (data_len, writeable_name, writeable_size, writeable_size - data_len, writeable_name))
+            log.warning("Data length (%u) less than %s size (%u), leaving %u unwritten bytes at the end of the %s" %
+                        (data_len, writeable_name, writeable_size, writeable_size - data_len, writeable_name))
 
     def update_binary(self, data_hex: str, offset: int = 0):
         """Update transparent EF binary data.

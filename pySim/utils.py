@@ -526,6 +526,13 @@ def expand_hex(hexstring, length):
     # no change
     return hexstring
 
+def bytes_for_nibbles(num_nibbles: int) -> int:
+    """compute the number of bytes needed to store the given number of nibbles."""
+    n_bytes = num_nibbles // 2
+    if num_nibbles & 1:
+        n_bytes += 1
+    return n_bytes
+
 
 def boxed_heading_str(heading, width=80):
     """Generate a string that contains a boxed heading."""
@@ -624,15 +631,17 @@ def decomposeATR(atr_txt):
         Returns:
             dictionary of field and values
 
-        >>> decomposeATR("3B A7 00 40 18 80 65 A2 08 01 01 52")
-    { 'T0': {'value': 167},
-      'TB': {1: {'value': 0}},
-      'TC': {2: {'value': 24}},
-      'TD': {1: {'value': 64}},
-      'TS': {'value': 59},
-      'atr': [59, 167, 0, 64, 24, 128, 101, 162, 8, 1, 1, 82],
-      'hb': {'value': [128, 101, 162, 8, 1, 1, 82]},
-      'hbn': 7}
+        Example::
+
+          >>> decomposeATR("3B A7 00 40 18 80 65 A2 08 01 01 52")
+            { 'T0': {'value': 167},
+              'TB': {1: {'value': 0}},
+              'TC': {2: {'value': 24}},
+              'TD': {1: {'value': 64}},
+              'TS': {'value': 59},
+              'atr': [59, 167, 0, 64, 24, 128, 101, 162, 8, 1, 1, 82],
+              'hb': {'value': [128, 101, 162, 8, 1, 1, 82]},
+              'hbn': 7}
     """
     ATR_PROTOCOL_TYPE_T0 = 0
     atr_txt = normalizeATR(atr_txt)

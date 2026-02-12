@@ -21,11 +21,11 @@ setup(
         "pyscard",
         "pyserial",
         "pytlv",
-        "cmd2 >= 1.5.0",
+        "cmd2 >= 1.5.0, < 3.0",
         "jsonpath-ng",
         "construct >= 2.10.70",
         "bidict",
-        "pyosmocom >= 0.0.9",
+        "pyosmocom >= 0.0.12",
         "pyyaml >= 5.1",
         "termcolor",
         "colorlog",
@@ -56,6 +56,10 @@ setup(
             "service-identity",
             "pyopenssl",
             "requests",
+            "smpplib",
+        ],
+        "CardKeyProviderPgsql": [
+            "psycopg2-binary",
         ]
     },
 )

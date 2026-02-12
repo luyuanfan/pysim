@@ -107,7 +107,7 @@ parser_esrv.add_argument('--output-file', required=True, help='Output file name'
 parser_esrv.add_argument('--add-flag', default=[], choices=esrv_flag_choices, action='append', help='Add flag to mandatory services list')
 parser_esrv.add_argument('--remove-flag', default=[], choices=esrv_flag_choices, action='append', help='Remove flag from mandatory services list')
 
-parser_info = subparsers.add_parser('tree', help='Display the filesystem tree')
+parser_tree = subparsers.add_parser('tree', help='Display the filesystem tree')
 
 def write_pes(pes: ProfileElementSequence, output_file:str):
     """write the PE sequence to a file"""
@@ -329,7 +329,7 @@ def do_info(pes: ProfileElementSequence, opts):
         print("Security domain Instance AID: %s" % b2h(sd.decoded['instance']['instanceAID']))
         # FIXME: 'applicationSpecificParametersC9' parsing to figure out enabled SCP
         for key in sd.keys:
-            print("\tKVN=0x%02x, KID=0x%02x, %s" % (key.key_version_number, key.key_identifier, key.key_components))
+            print("\t%s" % repr(key))
 
     # RFM
     print()

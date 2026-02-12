@@ -126,14 +126,14 @@ class Es9pClient:
         if self.opts.iccid:
             ntf_metadata['iccid'] = h2b(swap_nibbles(self.opts.iccid))
 
-        if self.opts.operation == 'download':
+        if self.opts.operation == 'install':
             pird = {
-                'transactionId': self.opts.transaction_id,
+                'transactionId': h2b(self.opts.transaction_id),
                 'notificationMetadata': ntf_metadata,
                 'smdpOid': self.opts.smdpp_oid,
                 'finalResult': ('successResult', {
-                    'aid': self.opts.isdp_aid,
-                    'simaResponse': self.opts.sima_response,
+                    'aid': h2b(self.opts.isdp_aid),
+                    'simaResponse': h2b(self.opts.sima_response),
                     }),
             }
             pird_bin = rsp.asn1.encode('ProfileInstallationResultData', pird)

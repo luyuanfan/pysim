@@ -4,7 +4,7 @@
 """
 
 #
-# (C) 2025 by Sysmocom s.f.m.c. GmbH
+# (C) 2025 by sysmocom - s.f.m.c. GmbH
 # All Rights Reserved
 #
 # Author: Philipp Maier <pmaier@sysmocom.de>
@@ -44,7 +44,7 @@ class PySimLogger:
     """
 
     LOG_FMTSTR = "%(levelname)s: %(message)s"
-    LOG_FMTSTR_VERBOSE = "%(module)s.%(lineno)d -- %(name)s - " + LOG_FMTSTR
+    LOG_FMTSTR_VERBOSE = "%(module)s.%(lineno)d -- " + LOG_FMTSTR
     __formatter = logging.Formatter(LOG_FMTSTR)
     __formatter_verbose = logging.Formatter(LOG_FMTSTR_VERBOSE)
 
@@ -108,7 +108,10 @@ class PySimLogger:
                 formatted_message = logging.Formatter.format(PySimLogger.__formatter, record)
             color = PySimLogger.colors.get(record.levelno)
             if color:
-                PySimLogger.print_callback(style(formatted_message, fg = color))
+                if isinstance(color, str):
+                    PySimLogger.print_callback(color + formatted_message + "\033[0m")
+                else:
+                    PySimLogger.print_callback(style(formatted_message, fg = color))
             else:
                 PySimLogger.print_callback(formatted_message)
 

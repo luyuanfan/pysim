@@ -40,6 +40,7 @@ from osmocom.utils import *
 from osmocom.construct import *
 
 from pySim.utils import dec_iccid, enc_iccid, dec_imsi, enc_imsi, dec_plmn, enc_plmn, dec_xplmn_w_act
+from pySim.utils import bytes_for_nibbles
 from pySim.profile import CardProfile, CardProfileAddon
 from pySim.filesystem import *
 from pySim.ts_31_102_telecom import DF_PHONEBOOK, DF_MULTIMEDIA, DF_MCS, DF_V2X
@@ -151,7 +152,7 @@ class EF_ADN(LinFixedEF):
         self._construct = Struct('alpha_id'/COptional(GsmOrUcs2Adapter(Rpad(Bytes(this._.total_len-14)))),
                                  'len_of_bcd'/Int8ub,
                                  'ton_npi'/TonNpi,
-                                 'dialing_nr'/ExtendedBcdAdapter(BcdAdapter(Rpad(Bytes(10)))),
+                                 'dialing_nr'/ExtendedBcdAdapter(PaddedBcdAdapter(Rpad(Bytes(10)))),
                                  'cap_conf_id'/Int8ub,
                                  ext_name/Int8ub)
 
@@ -192,11 +193,11 @@ class EF_MSISDN(LinFixedEF):
         ( 'ffffffffffffffffffffffffffffffffffffffff04b12143f5ffffffffffffffffff',
             {"alpha_id": "", "len_of_bcd": 4, "ton_npi": {"ext": True, "type_of_number": "network_specific",
                                                           "numbering_plan_id": "isdn_e164"},
-             "dialing_nr": "12345f"}),
+             "dialing_nr": "12345"}),
         ( '456967656e65205275666e756d6d6572ffffffff0891947172199181f3ffffffffff',
             {"alpha_id": "Eigene Rufnummer", "len_of_bcd": 8, "ton_npi": {"ext": True, "type_of_number": "international",
                                                                           "numbering_plan_id": "isdn_e164"},
-             "dialing_nr": "4917279119183f"}),
+             "dialing_nr": "4917279119183"}),
     ]
 
     # Ensure deprecated representations still work
@@ -214,7 +215,7 @@ class EF_MSISDN(LinFixedEF):
         self._construct = Struct('alpha_id'/COptional(GsmOrUcs2Adapter(Rpad(Bytes(this._.total_len-14)))),
                                  'len_of_bcd'/Int8ub,
                                  'ton_npi'/TonNpi,
-                                 'dialing_nr'/ExtendedBcdAdapter(BcdAdapter(Rpad(Bytes(10)))),
+                                 'dialing_nr'/ExtendedBcdAdapter(PaddedBcdAdapter(Rpad(Bytes(10)))),
                                   Padding(2, pattern=b'\xff'))
 
     # Maintain compatibility with deprecated representations
@@ -239,11 +240,20 @@ class EF_MSISDN(LinFixedEF):
 
 # TS 51.011 Section 10.5.6
 class EF_SMSP(LinFixedEF):
-    # FIXME: re-encode fails / missing alpha_id at start of output
-    _test_decode = [
+    _test_de_encode = [
+        ( '534d5343ffffffffffffffffffffffffe1ffffffffffffffffffffffff0891945197109099f9ffffff0000a9',
+          { "alpha_id": "SMSC", "parameter_indicators": { "tp_dest_addr": False, "tp_sc_addr": True,
+                                                          "tp_pid": True, "tp_dcs": True, "tp_vp": True },
+            "tp_dest_addr": { "length": 255, "ton_npi": { "ext": True, "type_of_number": "reserved_for_extension",
+                                                          "numbering_plan_id": "reserved_for_extension" },
+                              "call_number": "" },
+            "tp_sc_addr": { "length": 8, "ton_npi": { "ext": True, "type_of_number": "international",
+                                                      "numbering_plan_id": "isdn_e164" },
+                            "call_number": "4915790109999" },
+            "tp_pid": b"\x00", "tp_dcs": b"\x00", "tp_vp_minutes": 4320 } ),
         ( '454e6574776f726b73fffffffffffffff1ffffffffffffffffffffffffffffffffffffffffffffffff0000a7',
           { "alpha_id": "ENetworks", "parameter_indicators": { "tp_dest_addr": False, "tp_sc_addr": True,
-                                                               "tp_pid": True, "tp_dcs": True, "tp_vp": True },
+                                                               "tp_pid": True, "tp_dcs": True, "tp_vp": False },
             "tp_dest_addr": { "length": 255, "ton_npi": { "ext": True, "type_of_number": "reserved_for_extension",
                                                           "numbering_plan_id": "reserved_for_extension" },
                               "call_number": "" },
@@ -267,22 +277,36 @@ class EF_SMSP(LinFixedEF):
                 raise ValueError
         def _encode(self, obj, context, path):
             if obj <= 12*60:
-                return obj/5 - 1
+                return obj // 5 - 1
             elif obj <= 24*60:
                 return 143 + ((obj - (12 * 60)) // 30)
             elif obj <= 30 * 24 * 60:
-                return 166 + (obj / (24 * 60))
+                return 166 + (obj // (24 * 60))
             elif obj <= 63 * 7 * 24 * 60:
                 return 192 + (obj // (7 * 24 * 60))
             else:
                 raise ValueError
 
+    @staticmethod
+    def sc_addr_len(ctx):
+        """Compute the length field for an address field (like TP-DestAddr or TP-ScAddr)."""
+        if not hasattr(ctx, 'call_number') or len(ctx.call_number) == 0:
+            return 0xff
+        else:
+            return bytes_for_nibbles(len(ctx.call_number)) + 1
+
     def __init__(self, fid='6f42', sfid=None, name='EF.SMSP', desc='Short message service parameters', **kwargs):
         super().__init__(fid, sfid=sfid, name=name, desc=desc, rec_len=(28, None), **kwargs)
-        ScAddr = Struct('length'/Int8ub, 'ton_npi'/TonNpi, 'call_number'/BcdAdapter(Rpad(Bytes(10))))
-        self._construct = Struct('alpha_id'/COptional(GsmStringAdapter(Rpad(Bytes(this._.total_len-28)))),
-                                 'parameter_indicators'/InvertAdapter(FlagsEnum(Byte, tp_dest_addr=1, tp_sc_addr=2,
-                                                                                tp_pid=3, tp_dcs=4, tp_vp=5)),
+        ScAddr = Struct('length'/Rebuild(Int8ub, lambda ctx: EF_SMSP.sc_addr_len(ctx)),
+                        'ton_npi'/TonNpi, 'call_number'/PaddedBcdAdapter(Rpad(Bytes(10))))
+        self._construct = Struct('alpha_id'/COptional(GsmOrUcs2Adapter(Rpad(Bytes(this._.total_len-28)))),
+                                 'parameter_indicators'/InvertAdapter(BitStruct(
+                                                                        Const(7, BitsInteger(3)),
+                                                                        'tp_vp'/Flag,
+                                                                        'tp_dcs'/Flag,
+                                                                        'tp_pid'/Flag,
+                                                                        'tp_sc_addr'/Flag,
+                                                                        'tp_dest_addr'/Flag)),
                                  'tp_dest_addr'/ScAddr,
                                  'tp_sc_addr'/ScAddr,
 
@@ -637,12 +661,12 @@ class EF_AD(TransparentEF):
 # TS 51.011 Section 10.3.20 / 10.3.22
 class EF_VGCS(TransRecEF):
     _test_de_encode = [
-            ( "92f9ffff", "299fffff" ),
+            ( "92f9ffff", "299" ),
         ]
     def __init__(self, fid='6fb1', sfid=None, name='EF.VGCS', size=(4, 200), rec_len=4,
                  desc='Voice Group Call Service', **kwargs):
         super().__init__(fid, sfid=sfid, name=name, desc=desc, size=size, rec_len=rec_len, **kwargs)
-        self._construct = BcdAdapter(Bytes(4))
+        self._construct = PaddedBcdAdapter(Rpad(Bytes(4)))
 
 # TS 51.011 Section 10.3.21 / 10.3.23
 class EF_VGCSS(TransparentEF):

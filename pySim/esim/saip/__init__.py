@@ -21,6 +21,8 @@ import io
 import os
 from typing import Tuple, List, Optional, Dict, Union
 from collections import OrderedDict
+from difflib import SequenceMatcher, Match
+
 import asn1tools
 import zipfile
 from pySim import javacard
@@ -43,6 +45,29 @@ from pySim.global_platform.uicc import UiccSdInstallParams
 asn1 = compile_asn1_subdir('saip')
 
 logger = logging.getLogger(__name__)
+
+class NonMatch(Match):
+    """Representing a contiguous non-matching block of data; the opposite of difflib.Match"""
+    @classmethod
+    def from_matchlist(cls, l: List[Match], size:int) -> List['NonMatch']:
+        """Build a list of non-matching blocks of data from its inverse (list of matching blocks).
+        The caller must ensure that the input list is ordered, non-overlapping and only contains
+        matches at equal offsets in a and b."""
+        res = []
+        cur = 0
+        for match in l:
+            if match.a != match.b:
+                raise ValueError('only works for equal-offset matches')
+            assert match.a >= cur
+            nm_len = match.a - cur
+            if nm_len > 0:
+                # there's no point in generating zero-lenth non-matching sections
+                res.append(cls(a=cur, b=cur, size=nm_len))
+            cur = match.a + match.size
+        if size > cur:
+            res.append(cls(a=cur, b=cur, size=size-cur))
+
+        return res
 
 class Naa:
     """A class defining a Network Access Application (NAA)"""
@@ -144,6 +169,9 @@ class File:
     def file_size(self) -> Optional[int]:
         """Return the size of the file in bytes."""
         if self.file_type in ['LF', 'CY']:
+            if self._file_size and self.nb_rec is None and self.rec_len:
+                self.nb_rec = self._file_size // self.rec_len
+
             return self.nb_rec * self.rec_len
         elif self.file_type in ['TR', 'BT']:
             return self._file_size
@@ -183,7 +211,7 @@ class File:
         self.file_type = template.file_type
         self.fid = template.fid
         self.sfi = template.sfi
-        self.arr = template.arr.to_bytes(1)
+        self.arr = template.arr.to_bytes(1, 'big')
         if hasattr(template, 'rec_len'):
             self.rec_len = template.rec_len
         else:
@@ -227,7 +255,7 @@ class File:
             fileDescriptor['shortEFID'] = bytes([self.sfi])
         if self.df_name:
             fileDescriptor['dfName'] = self.df_name
-        if self.arr and self.arr != self.template.arr.to_bytes(1):
+        if self.arr and self.arr != self.template.arr.to_bytes(1, 'big'):
             fileDescriptor['securityAttributesReferenced'] = self.arr
         if self.file_type in ['LF', 'CY']:
             fdb_dec['file_type'] = 'working_ef'
@@ -264,7 +292,7 @@ class File:
         if self.read_and_update_when_deact:
             spfi |= 0x40 # TS 102 222 Table 5
         if spfi != 0x00:
-            pefi['specialFileInformation'] = spfi.to_bytes(1)
+            pefi['specialFileInformation'] = spfi.to_bytes(1, 'big')
         if self.fill_pattern:
             if not self.fill_pattern_repeat:
                 pefi['fillPattern'] = self.fill_pattern
@@ -291,6 +319,10 @@ class File:
         dfName = fileDescriptor.get('dfName', None)
         if dfName:
             self.df_name = dfName
+        efFileSize = fileDescriptor.get('efFileSize', None)
+        if efFileSize:
+            self._file_size = self._decode_file_size(efFileSize)
+
         pefi = fileDescriptor.get('proprietaryEFInfo', {})
         securityAttributesReferenced = fileDescriptor.get('securityAttributesReferenced', None)
         if securityAttributesReferenced:
@@ -300,13 +332,11 @@ class File:
             fdb_dec = fd_dec['file_descriptor_byte']
             self.shareable = fdb_dec['shareable']
             if fdb_dec['file_type'] == 'working_ef':
-                efFileSize = fileDescriptor.get('efFileSize', None)
                 if fd_dec['num_of_rec']:
                     self.nb_rec = fd_dec['num_of_rec']
                 if fd_dec['record_len']:
                     self.rec_len = fd_dec['record_len']
                 if efFileSize:
-                    self._file_size = self._decode_file_size(efFileSize)
                     if self.rec_len and self.nb_rec == None:
                         # compute the number of records from file size and record length
                         self.nb_rec = self._file_size // self.rec_len
@@ -406,12 +436,40 @@ class File:
                 return ValueError("Unknown key '%s' in tuple list" % k)
         return stream.getvalue()
 
-    def file_content_to_tuples(self) -> List[Tuple]:
-        # FIXME: simplistic approach. needs optimization. We should first check if the content
-        # matches the expanded default value from the template. If it does, return empty list.
-        # Next, we should compute the diff between the default value and self.body, and encode
-        # that as a sequence of fillFileOffset and fillFileContent tuples.
-        return [('fillFileContent', self.body)]
+    def file_content_to_tuples(self, optimize:bool = False) -> List[Tuple]:
+        """Encode the file contents into a list of fillFileContent / fillFileOffset tuples that can be fed
+        into the asn.1 encoder.  If optimize is True, it will try to encode only the differences from the
+        fillFileContent of the profile template.  Otherwise, the entire file contents will be encoded
+        as-is."""
+        if not self.file_type in ['TR', 'LF', 'CY', 'BT']:
+            return []
+        if not optimize:
+            # simplistic approach: encode the full file, ignoring the template/default
+            return [('fillFileContent', self.body)]
+        # Try to 'compress' the file body, based on the default file contents.
+        if self.template:
+            default = self.template.expand_default_value_pattern(length=len(self.body))
+            if not default:
+                sm = SequenceMatcher(a=b'\xff'*len(self.body), b=self.body)
+            else:
+                if default == self.body:
+                    # 100% match: return an empty tuple list to make eUICC use the default
+                    return []
+                sm = SequenceMatcher(a=default, b=self.body)
+        else:
+            # no template at all: we can only remove padding
+            sm = SequenceMatcher(a=b'\xff'*len(self.body), b=self.body)
+        matching_blocks = sm.get_matching_blocks()
+        # we can only make use of matches that have the same offset in 'a' and 'b'
+        matching_blocks = [x for x in matching_blocks if x.size > 0 and x.a == x.b]
+        non_matching_blocks = NonMatch.from_matchlist(matching_blocks, self.file_size)
+        ret = []
+        cur = 0
+        for block in non_matching_blocks:
+            ret.append(('fillFileOffset', block.a - cur))
+            ret.append(('fillFileContent', self.body[block.a:block.a+block.size]))
+            cur += block.size
+        return ret
 
     def __str__(self) -> str:
         return "File(%s)" % self.pe_name
@@ -633,8 +691,15 @@ class FsProfileElement(ProfileElement):
                     self.pe_sequence.cur_df = pe_df
                 self.pe_sequence.cur_df = self.pe_sequence.cur_df.add_file(file)
 
+    def file2pe(self, file: File):
+        """Update the "decoded" member for the given file with the contents from the given File instance.
+        We expect that the File instance is part of self.files"""
+        if self.files[file.pe_name] != file:
+            raise ValueError("The file you passed is not part of this ProfileElement")
+        self.decoded[file.pe_name] = file.to_tuples()
+
     def files2pe(self):
-        """Update the "decoded" member with the contents of the "files" member."""
+        """Update the "decoded" member for each file with the contents of the "files" member."""
         for k, f in self.files.items():
             self.decoded[k] = f.to_tuples()
 
@@ -985,9 +1050,9 @@ class SecurityDomainKey:
         self.key_components = key_components
 
     def __repr__(self) -> str:
-        return 'SdKey(KVN=0x%02x, ID=0x%02x, Usage=%s, Comp=%s)' % (self.key_version_number,
+        return 'SdKey(KVN=0x%02x, ID=0x%02x, Usage=0x%x, Comp=%s)' % (self.key_version_number,
                                                                     self.key_identifier,
-                                                                    self.key_usage_qualifier,
+                                                                    build_construct(KeyUsageQualifier, self.key_usage_qualifier)[0],
                                                                     repr(self.key_components))
 
     @classmethod
@@ -1020,6 +1085,7 @@ class ProfileElementSD(ProfileElement):
     def __init__(self, decoded: Optional[dict] = None, **kwargs):
         super().__init__(decoded, **kwargs)
         if decoded:
+            self._post_decode()
             return
         # provide some reasonable defaults for a MNO-SD
         self.decoded['instance'] = {
@@ -1738,8 +1804,7 @@ class ProfileElementSequence:
                 del hdr.decoded['eUICC-Mandatory-services'][service]
         # remove any associated mandatory filesystem templates
         for template in naa.templates:
-            if template in hdr.decoded['eUICC-Mandatory-GFSTEList']:
-                hdr.decoded['eUICC-Mandatory-GFSTEList'] = [x for x in hdr.decoded['eUICC-Mandatory-GFSTEList'] if not template.prefix_match(x)]
+            hdr.decoded['eUICC-Mandatory-GFSTEList'] = [x for x in hdr.decoded['eUICC-Mandatory-GFSTEList'] if not template.prefix_match(x)]
         # determine the ADF names (AIDs) of all NAA ADFs
         naa_adf_names = []
         if naa.pe_types[0] in self.pe_by_type:
@@ -1782,7 +1847,7 @@ class ProfileElementSequence:
             return None
 
     @staticmethod
-    def peclass_for_path(path: Path) -> Optional[ProfileElement]:
+    def peclass_for_path(path: Path) -> Tuple[Optional[ProfileElement], Optional[templates.FileTemplate]]:
         """Return the ProfileElement class that can contain a file with given path."""
         naa = ProfileElementSequence.naa_for_path(path)
         if naa:
@@ -1815,7 +1880,7 @@ class ProfileElementSequence:
                 return ProfileElementTelecom, ft
         return ProfileElementGFM, None
 
-    def pe_for_path(self, path: Path) -> Optional[ProfileElement]:
+    def pe_for_path(self, path: Path) -> Tuple[Optional[ProfileElement], Optional[templates.FileTemplate]]:
         """Return the ProfileElement instance that can contain a file with matching path. This will
         either be an existing PE within the sequence, or it will be a newly-allocated PE that is
         inserted into the sequence."""
@@ -1881,7 +1946,10 @@ class ProfileElementSequence:
 
 
 class FsNode:
-    """A node in the filesystem hierarchy."""
+    """A node in the filesystem hierarchy. Each node can have a parent node and any number of children.
+    Each node is identified uniquely within the parent by its numeric FID and its optional human-readable
+    name.  Each node usually is associated with an instance of the File class for the actual content of
+    the file.  FsNode is the base class used by more  specific nodes, such as FsNode{EF,DF,ADF,MF}."""
     def __init__(self, fid: int, parent: Optional['FsNode'], file: Optional[File] = None,
                  name: Optional[str] = None):
         self.fid = fid
@@ -1936,7 +2004,7 @@ class FsNode:
         return x
 
     def walk(self, fn, **kwargs):
-        """call 'fn(self, **kwargs) for the File."""
+        """call 'fn(self, ``**kwargs``) for the File."""
         return [fn(self, **kwargs)]
 
 class FsNodeEF(FsNode):
@@ -2026,7 +2094,7 @@ class FsNodeDF(FsNode):
         return cur
 
     def walk(self, fn, **kwargs):
-        """call 'fn(self, **kwargs) for the DF and recursively for all children."""
+        """call 'fn(self, ``**kwargs``) for the DF and recursively for all children."""
         ret = super().walk(fn, **kwargs)
         for c in self.children.values():
             ret += c.walk(fn, **kwargs)

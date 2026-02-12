@@ -69,12 +69,12 @@ from pySim.ts_102_222 import Ts102222Commands
 from pySim.gsm_r import DF_EIRENE
 from pySim.cat import ProactiveCommand
 
-from pySim.card_key_provider import CardKeyProviderCsv
+from pySim.card_key_provider import CardKeyProviderCsv, CardKeyProviderPgsql
 from pySim.card_key_provider import card_key_provider_register, card_key_provider_get_field, card_key_provider_get
 
 from pySim.app import init_card
 
-log = PySimLogger.get("main")
+log = PySimLogger.get(Path(__file__).stem)
 
 class Cmd2Compat(cmd2.Cmd):
     """Backwards-compatibility wrapper around cmd2.Cmd to support older and newer
@@ -519,8 +519,17 @@ Online manual available at https://downloads.osmocom.org/docs/pysim/master/html/
     @cmd2.with_category(CUSTOM_CATEGORY)
     def do_version(self, opts):
         """Print the pySim software version."""
-        import pkg_resources
-        self.poutput(pkg_resources.get_distribution('pySim'))
+        from importlib.metadata import version as vsn
+        self.poutput("pyosmocom " + vsn('pyosmocom'))
+        import os
+        cwd = os.path.dirname(os.path.realpath(__file__))
+        if os.path.isdir(os.path.join(cwd, ".git")):
+            import subprocess
+            url = subprocess.check_output(['git', 'config', '--get', 'remote.origin.url']).decode('ascii').strip()
+            version = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=cwd).decode('ascii').strip()
+            self.poutput(os.path.basename(url) + " " + version)
+        else:
+            self.poutput("pySim " + vsn('pySim'))
 
 @with_default_category('pySim Commands')
 class PySimCommands(CommandSet):
@@ -1138,8 +1147,11 @@ global_group.add_argument("--verbose", help="Enable verbose logging",
 
 card_key_group = option_parser.add_argument_group('Card Key Provider Options')
 card_key_group.add_argument('--csv', metavar='FILE',
-                            default=str(Path.home()) + "/.osmocom/pysim/card_data.csv",
+                            default="~/.osmocom/pysim/card_data.csv",
                             help='Read card data from CSV file')
+card_key_group.add_argument('--pgsql', metavar='FILE',
+                            default="~/.osmocom/pysim/card_data_pgsql.cfg",
+                            help='Read card data from PostgreSQL database (config file)')
 card_key_group.add_argument('--csv-column-key', metavar='FIELD:AES_KEY_HEX', default=[], action='append',
                             help=argparse.SUPPRESS, dest='column_key')
 card_key_group.add_argument('--column-key', metavar='FIELD:AES_KEY_HEX', default=[], action='append',
@@ -1164,7 +1176,7 @@ if __name__ == '__main__':
 
     # Ensure that we are able to print formatted warnings from the beginning.
     PySimLogger.setup(print, {logging.WARN: YELLOW})
-    if (opts.verbose):
+    if opts.verbose:
         PySimLogger.set_verbose(True)
         PySimLogger.set_level(logging.DEBUG)
     else:
@@ -1177,8 +1189,10 @@ if __name__ == '__main__':
     for par in opts.column_key:
         name, key = par.split(':')
         column_keys[name] = key
-    if os.path.isfile(opts.csv):
-        card_key_provider_register(CardKeyProviderCsv(opts.csv, column_keys))
+    if os.path.isfile(os.path.expanduser(opts.csv)):
+        card_key_provider_register(CardKeyProviderCsv(os.path.expanduser(opts.csv), column_keys))
+    if os.path.isfile(os.path.expanduser(opts.pgsql)):
+        card_key_provider_register(CardKeyProviderPgsql(os.path.expanduser(opts.pgsql), column_keys))
 
     # Init card reader driver
     sl = init_reader(opts, proactive_handler = Proact())
